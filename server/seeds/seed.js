@@ -35,8 +35,21 @@ async function seed() {
 
     console.log(`Parsed ${records.length} rows from CSV`);
 
+    // Deduplicate: prefer domestic league entry over Champions League
+    const playerMap = new Map();
+    for (const row of records) {
+      const pid = parseInt(row.player_id, 10);
+      if (!playerMap.has(pid)) {
+        playerMap.set(pid, row);
+      } else if (playerMap.get(pid).league === 'Champions League' && row.league !== 'Champions League') {
+        playerMap.set(pid, row);
+      }
+    }
+    const deduped = Array.from(playerMap.values());
+    console.log(`Deduplicated: ${records.length} rows -> ${deduped.length} unique players`);
+
     // Map CSV rows to player documents
-    const players = records.map((row) => ({
+    const players = deduped.map((row) => ({
       player_id: safeNum(row.player_id),
       player: row.player || '',
       slug: row.slug || '',
@@ -139,29 +152,33 @@ async function seed() {
     const totalPlayers = await Player.countDocuments();
     console.log(`${totalPlayers} players inserted`);
 
-    // Derive teams from player data
-    const teamAgg = await Player.aggregate([
-      {
-        $group: {
-          _id: '$team_id',
-          name: { $first: '$team' },
-          leagues: { $addToSet: '$league' },
-          playerCount: { $sum: 1 },
-        },
-      },
-    ]);
+    // Derive teams from ALL CSV records (before dedup) to capture all leagues
+    const teamMap = new Map();
+    for (const row of records) {
+      const tid = parseInt(row.team_id, 10);
+      if (!teamMap.has(tid)) {
+        teamMap.set(tid, { name: row.team, leagues: new Set() });
+      }
+      teamMap.get(tid).leagues.add(row.league);
+    }
 
-    const teams = teamAgg.map((t) => {
-      // Primary league = domestic league (not Champions League)
-      const domesticLeagues = t.leagues.filter((l) => l !== 'Champions League');
-      const primaryLeague = domesticLeagues.length > 0 ? domesticLeagues[0] : t.leagues[0];
+    // Get player counts from DB (after dedup insert)
+    const teamAgg = await Player.aggregate([
+      { $group: { _id: '$team_id', playerCount: { $sum: 1 } } },
+    ]);
+    const countMap = new Map(teamAgg.map(t => [t._id, t.playerCount]));
+
+    const teams = Array.from(teamMap.entries()).map(([tid, t]) => {
+      const leaguesArr = Array.from(t.leagues);
+      const domesticLeagues = leaguesArr.filter((l) => l !== 'Champions League');
+      const primaryLeague = domesticLeagues.length > 0 ? domesticLeagues[0] : leaguesArr[0];
 
       return {
         name: t.name,
-        team_id: t._id,
+        team_id: tid,
         league: primaryLeague,
-        leagues: t.leagues,
-        playerCount: t.playerCount,
+        leagues: leaguesArr,
+        playerCount: countMap.get(tid) || 0,
       };
     });
 

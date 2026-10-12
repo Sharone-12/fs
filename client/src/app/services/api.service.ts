@@ -18,8 +18,8 @@ export class ApiService {
     return this.http.get<Team[]>(`${this.baseUrl}/teams`, { params });
   }
 
-  getTeam(teamId: number): Observable<{ team: Team; players: Player[] }> {
-    return this.http.get<{ team: Team; players: Player[] }>(`${this.baseUrl}/teams/${teamId}`);
+  getTeam(teamId: number): Observable<Team & { players: Player[] }> {
+    return this.http.get<Team & { players: Player[] }>(`${this.baseUrl}/teams/${teamId}`);
   }
 
   getPlayers(options: {
@@ -51,8 +51,16 @@ export class ApiService {
 
   simulate(homeLineup: LineupData, awayLineup: LineupData): Observable<SimulationResult> {
     return this.http.post<SimulationResult>(`${this.baseUrl}/simulate`, {
-      homeTeam: homeLineup,
-      awayTeam: awayLineup,
+      homeLineup: {
+        formation: homeLineup.formation,
+        players: homeLineup.players.map(p => p.player_id),
+        teamName: homeLineup.name,
+      },
+      awayLineup: {
+        formation: awayLineup.formation,
+        players: awayLineup.players.map(p => p.player_id),
+        teamName: awayLineup.name,
+      },
     });
   }
 }
